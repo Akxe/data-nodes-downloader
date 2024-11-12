@@ -1,5 +1,6 @@
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.48/deno-dom-wasm.ts";
 import { BatchQueue } from "https://deno.land/x/batch_queue@v0.0.1/mod.ts";
+import { MultiProgressBar } from "https://deno.land/x/progress@v1.2.8/mod.ts";
 
 async function getFuckingFastLink(downloadUrl: string) {
 	const headers = new Headers({
@@ -79,14 +80,40 @@ function processLinks(urls: string[]) {
 	}).filter(x => !!x));
 }
 
-function downloadFile(request: Request) {
+type Progress = {
+	readonly completed: number;
+	readonly total: number;
+	readonly text: string;
+}
+
+class PartialProgressBar extends MultiProgressBar {
+	last: Progress[] = [];
+
+	renderSpecific(index: number, value: Progress) {
+		const current = [...this.last];
+		current[index] = value;
+		this.last = Array.from(current, (value, index) => value || {
+			completed: 100,
+			total: 100,
+			text: `undefined#${index}`,
+		});
+		return this.render(this.last);
+	}
+}
+
+function downloadFile(request: Request, progressBars: PartialProgressBar, index: number) {
 	const fileName = request.url.split('/').pop() || 'file';
 
 	return async () => {
 		try {
-			const fileExists = await Deno.stat(fileName).then(() => true).catch(() => false);
-			if (fileExists) {
-				console.log(`[s] File already exists: ${fileName}, skipping download.`);
+			const stats = await Deno.stat(fileName).catch(() => null);
+
+			if (stats) {
+				progressBars.renderSpecific(index, {
+					completed: stats.size,
+					total: stats.size,
+					text: fileName,
+				});
 				return;
 			}
 
@@ -96,12 +123,24 @@ function downloadFile(request: Request) {
 				return;
 			}
 
+			const contentLength = +response.headers.get("Content-Length")!;
+			let receivedLength = 0;
+
 			const file = await Deno.open(fileName, { create: true, write: true });
-			await response.body.pipeTo(file.writable);
+			await response.body.pipeThrough(new TransformStream({
+				transform(chunk, controller) {
+					receivedLength += chunk.length;
+					progressBars.renderSpecific(index, {
+						completed: receivedLength,
+						total: contentLength,
+						text: fileName,
+					});
+					controller.enqueue(chunk);
+				},
+			})).pipeTo(file.writable);
 			file.close();
-			console.log(`[*] Successfully downloaded: "${fileName}"`);
 		} catch (error) {
-			console.log(`[!] Error downloading ${request}:`, error);
+			console.log(`[!] Error downloading ${request.url}:`, error);
 		}
 	};
 }
@@ -118,8 +157,12 @@ console.log("[*] Done generating download links!");
 if (confirm('Do you want to download the files?')) {
 	console.log("[*] Starting downloading the files...");
 
+	const progressBars = new PartialProgressBar({
+		title: "Downloading files",
+	});
+
 	const batch = new BatchQueue(3);
-	batch.queue(...downloadLinks.map(downloadLink => downloadFile(downloadLink)));
+	batch.queue(...downloadLinks.map((downloadLink, i) => downloadFile(downloadLink, progressBars, i)));
 
 	await batch.run();
 } else {
