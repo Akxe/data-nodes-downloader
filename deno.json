@@ -2,5 +2,6 @@
   "tasks": {
     "dev": "deno run --watch main.ts"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "version": "0.1.0"
 }
