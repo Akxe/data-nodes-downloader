@@ -1,10 +1,8 @@
 name: Compile
 on:
-  push:
-    branches: master
-  workflow_dispatch:
   release:
     types: [created]
+
 jobs:
   compile:
     name: Compile
@@ -44,7 +42,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.output_name }}
+          name: compiled-files
           path: ${{ matrix.output_name }}
 
   release:
@@ -58,6 +56,7 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v3
         with:
+          name: compiled-files
           path: ./artifacts
 
       - name: Release
